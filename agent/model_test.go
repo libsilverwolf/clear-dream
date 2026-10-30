@@ -73,12 +73,12 @@ func stopResponse(content string) scriptedResponse {
 	}}
 }
 
-func toolCallResponse(finishReason string, toolCalls ...model.ToolCall) scriptedResponse {
+func toolCallResponse(toolCalls ...model.ToolCall) scriptedResponse {
 	return scriptedResponse{response: model.ChatCompletionResponse{
 		Choices: []model.Choice{{
 			Index:        0,
 			Message:      model.Message{Role: model.RoleAssistant, ToolCalls: toolCalls},
-			FinishReason: finishReason,
+			FinishReason: "tool_calls",
 		}},
 	}}
 }
@@ -350,7 +350,7 @@ func TestInvokeRunsToolCallsUntilStop(t *testing.T) {
 	})
 
 	client := &fakeApiClient{script: []scriptedResponse{
-		toolCallResponse("tool_calls", newToolCall("call-1", "echo", `{"Text":"hello"}`)),
+		toolCallResponse(newToolCall("call-1", "echo", `{"Text":"hello"}`)),
 		stopResponse("final answer"),
 	}}
 	a := newTestModel(registry, client)
@@ -444,7 +444,7 @@ func TestInvokeEncodesStructuredToolResults(t *testing.T) {
 	})
 
 	client := &fakeApiClient{script: []scriptedResponse{
-		toolCallResponse("tool_calls", newToolCall("call-1", "echo", `{"Text":"hello"}`)),
+		toolCallResponse(newToolCall("call-1", "echo", `{"Text":"hello"}`)),
 		stopResponse("done"),
 	}}
 	a := newTestModel(registry, client)
@@ -474,7 +474,7 @@ func TestInvokeReportsToolErrorAndContinues(t *testing.T) {
 	})
 
 	client := &fakeApiClient{script: []scriptedResponse{
-		toolCallResponse("tool_calls", newToolCall("call-1", "explode", `{}`)),
+		toolCallResponse(newToolCall("call-1", "explode", `{}`)),
 		stopResponse("recovered"),
 	}}
 	a := newTestModel(registry, client)
@@ -509,7 +509,7 @@ func TestInvokeReportsUnencodableToolResult(t *testing.T) {
 	})
 
 	client := &fakeApiClient{script: []scriptedResponse{
-		toolCallResponse("tool_calls", newToolCall("call-1", "channel", `{}`)),
+		toolCallResponse(newToolCall("call-1", "channel", `{}`)),
 		stopResponse("done"),
 	}}
 	a := newTestModel(registry, client)
@@ -529,7 +529,7 @@ func TestInvokeReportsUnencodableToolResult(t *testing.T) {
 
 func TestInvokeFailsForUnknownTool(t *testing.T) {
 	client := &fakeApiClient{script: []scriptedResponse{
-		toolCallResponse("tool_calls", newToolCall("call-1", "missing", `{}`)),
+		toolCallResponse(newToolCall("call-1", "missing", `{}`)),
 	}}
 	a := newTestModel(nil, client)
 
@@ -554,8 +554,7 @@ func TestInvokeStopsAfterMaxToolRounds(t *testing.T) {
 
 	client := &fakeApiClient{}
 	for i := 0; i < maxToolRounds*2; i++ {
-		client.script = append(client.script, toolCallResponse("tool_calls",
-			newToolCall(fmt.Sprintf("call-%d", i), "loop", `{}`)))
+		client.script = append(client.script, toolCallResponse(newToolCall(fmt.Sprintf("call-%d", i), "loop", `{}`)))
 	}
 	a := newTestModel(registry, client)
 

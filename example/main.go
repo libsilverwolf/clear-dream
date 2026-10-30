@@ -91,15 +91,20 @@ func loadConfig() config {
 }
 
 func printBanner(out io.Writer, cfg config, registry *tools.ToolRegistry) {
-	fmt.Fprintln(out, "clear-dream REPL demo")
-	fmt.Fprintf(out, "model:    %s\n", cfg.model)
-	fmt.Fprintf(out, "endpoint: %s/chat/completions\n", cfg.baseURL)
-	fmt.Fprintf(out, "tools:    %s\n", strings.Join(toolNames(registry), ", "))
+	writef(out, "clear-dream REPL demo\n")
+	writef(out, "model:    %s\n", cfg.model)
+	writef(out, "endpoint: %s/chat/completions\n", cfg.baseURL)
+	writef(out, "tools:    %s\n", strings.Join(toolNames(registry), ", "))
 	if cfg.apiKey == "" {
-		fmt.Fprintln(out, "note:     OPENAI_API_KEY is empty; requests are sent without Authorization")
+		writef(out, "note:     OPENAI_API_KEY is empty; requests are sent without Authorization\n")
 	}
-	fmt.Fprintln(out, "type /help for commands, /exit to quit")
-	fmt.Fprintln(out)
+	writef(out, "type /help for commands, /exit to quit\n\n")
+}
+
+// writef writes formatted output and ignores the error: the REPL has no way to
+// recover from a broken stdout or stderr.
+func writef(out io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(out, format, args...)
 }
 
 func toolNames(registry *tools.ToolRegistry) []string {
@@ -119,9 +124,9 @@ func runREPL(in io.Reader, out io.Writer, bot *agent.Model, registry *tools.Tool
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 
 	for {
-		fmt.Fprint(out, "> ")
+		writef(out, "> ")
 		if !scanner.Scan() {
-			fmt.Fprintln(out)
+			writef(out, "\n")
 			return scanner.Err()
 		}
 
@@ -130,21 +135,21 @@ func runREPL(in io.Reader, out io.Writer, bot *agent.Model, registry *tools.Tool
 		case "":
 			continue
 		case "/exit", "/quit", "exit", "quit":
-			fmt.Fprintln(out, "bye")
+			writef(out, "bye\n")
 			return nil
 		case "/help":
-			fmt.Fprintln(out, helpText)
+			writef(out, "%s\n", helpText)
 		case "/tools":
 			for _, name := range toolNames(registry) {
-				fmt.Fprintln(out, name)
+				writef(out, "%s\n", name)
 			}
 		default:
 			response, err := bot.Invoke(line)
 			if err != nil {
-				fmt.Fprintf(out, "error: %v\n", err)
+				writef(out, "error: %v\n", err)
 				continue
 			}
-			fmt.Fprintln(out, response)
+			writef(out, "%s\n", response)
 		}
 	}
 }

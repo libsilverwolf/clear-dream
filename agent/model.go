@@ -71,7 +71,7 @@ func NewModel(params *NewModelParams) *Model {
 }
 
 // runToolCall executes a single tool call and renders the outbound tool message.
-func (a *Model) runToolCall(toolCall model.ToolCall, ctx model.Context) (model.Message, error) {
+func (a *Model) runToolCall(toolCall model.ToolCall, ctx model.LlmContext) (model.Message, error) {
 	tool, ok := a.toolsRegistry.GetTool(toolCall.Function.Name)
 	if !ok {
 		return model.Message{}, eris.Errorf("tool %q not found", toolCall.Function.Name)
