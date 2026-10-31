@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -20,27 +19,6 @@ const (
 	// block the bot forever.
 	requestTimeout = 120 * time.Second
 )
-
-type toolRunResult struct {
-	Success bool
-	Error   string
-	Content string
-}
-
-// encodeToolResult renders a tool result for the model. Plain strings are passed
-// through unchanged; any other value is JSON-encoded.
-func encodeToolResult(result any) (string, error) {
-	if text, ok := result.(string); ok {
-		return text, nil
-	}
-
-	encoded, err := json.Marshal(result)
-	if err != nil {
-		return "", eris.Wrap(err, "failed to encode tool result")
-	}
-
-	return string(encoded), nil
-}
 
 type Model struct {
 	logger        *logrus.Entry
@@ -72,14 +50,16 @@ func NewModel(params *NewModelParams) *Model {
 
 // runToolCall executes a single tool call and renders the outbound tool message.
 func (a *Model) runToolCall(toolCall model.ToolCall, ctx model.LlmContext) (model.Message, error) {
-	tool, ok := a.toolsRegistry.GetTool(toolCall.Function.Name)
-	if !ok {
-		return model.Message{}, eris.Errorf("tool %q not found", toolCall.Function.Name)
+	content, runErr := a.toolsRegistry.RunTool(toolCall, ctx)
+	if content == "" {
+		// Registry-level failures (for example an unknown tool) abort the run.
+		if runErr != nil {
+			return model.Message{}, runErr
+		}
+
+		return model.Message{}, eris.Errorf("tool %q returned no content", toolCall.Function.Name)
 	}
 
-	result, runErr := tool.Run(toolCall.Function.Arguments, ctx)
-	// report the tool outcome back to the model
-	outcome := toolRunResult{Success: runErr == nil}
 	if runErr != nil {
 		a.logger.WithFields(logrus.Fields{
 			"tool_call_id":     toolCall.ID,
@@ -87,27 +67,12 @@ func (a *Model) runToolCall(toolCall model.ToolCall, ctx model.LlmContext) (mode
 			"tool_call_params": fmt.Sprintf("%+v", toolCall.Function.Arguments),
 			"run_error":        runErr,
 		}).Error("tool call return error")
-		outcome.Error = runErr.Error()
-	}
-	if result != nil {
-		content, err := encodeToolResult(result)
-		if err != nil {
-			outcome.Success = false
-			outcome.Error = err.Error()
-		} else {
-			outcome.Content = content
-		}
-	}
-
-	contentText, err := json.Marshal(outcome)
-	if err != nil {
-		return model.Message{}, eris.Wrap(err, "failed to encode tool result")
 	}
 
 	return model.Message{
 		Role:       model.RoleTool,
 		ToolCallID: toolCall.ID,
-		Content:    string(contentText),
+		Content:    content,
 	}, nil
 }
 

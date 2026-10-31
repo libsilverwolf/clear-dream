@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"reflect"
 	"sort"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/libsilverwolf/clear-dream/model"
+	"github.com/rotisserie/eris"
 	"github.com/sirupsen/logrus"
 )
 
@@ -23,6 +25,15 @@ type ToolArgument struct {
 }
 
 type ToolFunction func(input any, args any) (any, error)
+
+// ToolRunResult is the payload reported back to the model for a tool call.
+// Data holds the JSON-encoded tool result; Success and Error describe whether
+// the call completed so the model can reason about failures.
+type ToolRunResult struct {
+	Success bool
+	Error   string
+	Data    string
+}
 
 type Tool interface {
 	Description() string
@@ -101,6 +112,41 @@ func (r *ToolRegistry) GetToolDefinitions() []model.Tool {
 	}
 
 	return definitions
+}
+
+// RunTool executes the tool requested by call and returns a JSON-encoded
+// ToolRunResult. The tool result is JSON-encoded into Data, and execution
+// failures are reported through Success/Error so the model can react to them.
+// The context is forwarded to the tool handler.
+func (r *ToolRegistry) RunTool(call model.ToolCall, ctx model.LlmContext) (string, error) {
+	tool, ok := r.GetTool(call.Function.Name)
+	if !ok {
+		return "", eris.Errorf("tool %q not found", call.Function.Name)
+	}
+
+	outcome := ToolRunResult{Success: true}
+	result, runErr := tool.Run(call.Function.Arguments, ctx)
+	if runErr != nil {
+		outcome.Success = false
+		outcome.Error = runErr.Error()
+	}
+
+	if result != nil {
+		encoded, err := json.Marshal(result)
+		if err != nil {
+			outcome.Success = false
+			outcome.Error = "failed to encode tool result: " + err.Error()
+		} else {
+			outcome.Data = string(encoded)
+		}
+	}
+
+	content, err := json.Marshal(outcome)
+	if err != nil {
+		return "", eris.Wrap(err, "failed to encode tool result")
+	}
+
+	return string(content), runErr
 }
 
 // BuildToolDefinition converts an internal Tool description into a model-ready

@@ -41,14 +41,14 @@ comes from the standard library.
 │   ├── openai.go           # Chat Completions types, tools, JSON Schema, chunks
 │   └── context.go          # LlmContext (any) passed to tool handlers
 ├── tools/
-│   ├── tools.go            # Tool/ToolArgument, ToolRegistry, schema builder
+│   ├── tools.go            # Tool/ToolArgument, ToolRegistry (RunTool), schema builder
 │   ├── utils.go            # CreateTool / ExtractToolParams via reflection
 │   ├── tools_test.go
 │   └── utils_test.go
 ├── example/                # Standalone demos
 │   ├── main.go             # REPL demo
 │   ├── README.md
-│   └── graph/              # Offline DAG pipeline demo
+│   └── graph/              # LLM + ToolNode DAG loop demo (offline by default)
 │       ├── main.go
 │       └── README.md
 ├── Taskfile.yml            # `task repl`
@@ -65,8 +65,10 @@ Key entry points:
 - `agent.NewGraph[T]` → `AddNode` / `AddEdge` / `AddConditionalEdge` /
   `SetMaxSteps` → `Compile` → `CompiledGraph[T].Invoke`; nodes are
   `func(T) (T, error)` and routers are `func(T) (string, error)`.
-- `tools.NewToolRegistry` + `tools.CreateTool` register tools; `Model` sends
-  their definitions with every request.
+- `tools.NewToolRegistry` + `tools.CreateTool` register tools;
+  `ToolRegistry.RunTool` resolves and executes a `model.ToolCall`, returning a
+  JSON `ToolRunResult` envelope, and `Model` sends tool definitions with every
+  request.
 
 ## Project Constraints
 

@@ -1,8 +1,11 @@
 package tools
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -467,5 +470,186 @@ func TestBuildToolDefinitionMapsReflectedGoTypes(t *testing.T) {
 		if !reflect.DeepEqual(got, wantSchema) {
 			t.Fatalf("Properties[%q] = %#v, want %#v", name, got, wantSchema)
 		}
+	}
+}
+
+// decodeRunResult decodes the ToolRunResult envelope returned by RunTool.
+func decodeRunResult(t *testing.T, content string) ToolRunResult {
+	t.Helper()
+
+	var result ToolRunResult
+	if err := json.Unmarshal([]byte(content), &result); err != nil {
+		t.Fatalf("decode RunTool() content %q: %v", content, err)
+	}
+
+	return result
+}
+
+func TestRegistryRunTool(t *testing.T) {
+	registry := NewToolRegistry()
+
+	var gotParams, gotContext any
+	tool := newFakeTool("echoes its input")
+	tool.runFn = func(params any, ctx any) (any, error) {
+		gotParams, gotContext = params, ctx
+		return "hello " + params.(string), nil
+	}
+	registry.RegisterTool("echo", tool)
+
+	content, err := registry.RunTool(model.ToolCall{
+		ID: "call-1",
+		Function: model.FunctionCallData{
+			Name:      "echo",
+			Arguments: "world",
+		},
+	}, "ctx-value")
+	if err != nil {
+		t.Fatalf("RunTool() error = %v, want nil", err)
+	}
+
+	outcome := decodeRunResult(t, content)
+	if !outcome.Success {
+		t.Fatalf("RunTool() Success = false, want true (error: %q)", outcome.Error)
+	}
+	if outcome.Error != "" {
+		t.Fatalf("RunTool() Error = %q, want empty", outcome.Error)
+	}
+	if outcome.Data != `"hello world"` {
+		t.Fatalf("RunTool() Data = %q, want %q", outcome.Data, `"hello world"`)
+	}
+	if gotParams != "world" {
+		t.Fatalf("tool params = %#v, want %q", gotParams, "world")
+	}
+	if gotContext != "ctx-value" {
+		t.Fatalf("tool context = %#v, want %q", gotContext, "ctx-value")
+	}
+}
+
+func TestRegistryRunToolEncodesResults(t *testing.T) {
+	tests := []struct {
+		name       string
+		result     any
+		wantData   string
+		wantError  string
+		wantFailed bool
+	}{
+		{name: "string is json encoded", result: "already text", wantData: `"already text"`},
+		{name: "empty string is json encoded", result: "", wantData: `""`},
+		{name: "map is json encoded", result: map[string]any{"a": 1}, wantData: `{"a":1}`},
+		{name: "slice is json encoded", result: []int{1, 2}, wantData: `[1,2]`},
+		{name: "number is json encoded", result: 42, wantData: "42"},
+		{name: "nil result leaves data empty", result: nil},
+		{name: "struct is json encoded", result: struct {
+			Name string `json:"name"`
+		}{Name: "x"}, wantData: `{"name":"x"}`},
+		{name: "unencodable value is reported", result: make(chan int), wantFailed: true, wantError: "failed to encode tool result"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			registry := NewToolRegistry()
+			result := tc.result
+			tool := newFakeTool("returns a result")
+			tool.runFn = func(params any, ctx any) (any, error) {
+				return result, nil
+			}
+			registry.RegisterTool("result", tool)
+
+			content, err := registry.RunTool(model.ToolCall{
+				Function: model.FunctionCallData{Name: "result"},
+			}, nil)
+			if err != nil {
+				t.Fatalf("RunTool() error = %v, want nil", err)
+			}
+
+			outcome := decodeRunResult(t, content)
+			if outcome.Data != tc.wantData {
+				t.Fatalf("RunTool() Data = %q, want %q", outcome.Data, tc.wantData)
+			}
+			if tc.wantFailed {
+				if outcome.Success {
+					t.Fatal("RunTool() Success = true, want false")
+				}
+				if !strings.Contains(outcome.Error, tc.wantError) {
+					t.Fatalf("RunTool() Error = %q, want it to contain %q", outcome.Error, tc.wantError)
+				}
+				return
+			}
+			if !outcome.Success {
+				t.Fatalf("RunTool() Success = false, want true (error: %q)", outcome.Error)
+			}
+			if outcome.Error != "" {
+				t.Fatalf("RunTool() Error = %q, want empty", outcome.Error)
+			}
+		})
+	}
+}
+
+func TestRegistryRunToolUnknownTool(t *testing.T) {
+	content, err := NewToolRegistry().RunTool(model.ToolCall{
+		Function: model.FunctionCallData{Name: "missing"},
+	}, nil)
+	if err == nil {
+		t.Fatal("RunTool() error = nil, want an unknown tool error")
+	}
+	if !strings.Contains(err.Error(), `tool "missing" not found`) {
+		t.Fatalf("RunTool() error = %v, want it to mention the unknown tool", err)
+	}
+	if content != "" {
+		t.Fatalf("RunTool() content = %q, want empty", content)
+	}
+}
+
+func TestRegistryRunToolReturnsResultWithError(t *testing.T) {
+	registry := NewToolRegistry()
+	tool := newFakeTool("fails after producing a result")
+	tool.runFn = func(params any, ctx any) (any, error) {
+		return "partial output", errors.New("boom")
+	}
+	registry.RegisterTool("partial", tool)
+
+	content, err := registry.RunTool(model.ToolCall{
+		Function: model.FunctionCallData{Name: "partial"},
+	}, nil)
+	if err == nil {
+		t.Fatal("RunTool() error = nil, want the tool error")
+	}
+
+	outcome := decodeRunResult(t, content)
+	if outcome.Success {
+		t.Fatal("RunTool() Success = true, want false")
+	}
+	if !strings.Contains(outcome.Error, "boom") {
+		t.Fatalf("RunTool() Error = %q, want it to contain %q", outcome.Error, "boom")
+	}
+	if outcome.Data != `"partial output"` {
+		t.Fatalf("RunTool() Data = %q, want %q", outcome.Data, `"partial output"`)
+	}
+}
+
+func TestRegistryRunToolNilResultWithError(t *testing.T) {
+	registry := NewToolRegistry()
+	tool := newFakeTool("fails")
+	tool.runFn = func(params any, ctx any) (any, error) {
+		return nil, errors.New("boom")
+	}
+	registry.RegisterTool("failing", tool)
+
+	content, err := registry.RunTool(model.ToolCall{
+		Function: model.FunctionCallData{Name: "failing"},
+	}, nil)
+	if err == nil {
+		t.Fatal("RunTool() error = nil, want the tool error")
+	}
+
+	outcome := decodeRunResult(t, content)
+	if outcome.Success {
+		t.Fatal("RunTool() Success = true, want false")
+	}
+	if outcome.Error != "boom" {
+		t.Fatalf("RunTool() Error = %q, want %q", outcome.Error, "boom")
+	}
+	if outcome.Data != "" {
+		t.Fatalf("RunTool() Data = %q, want empty", outcome.Data)
 	}
 }

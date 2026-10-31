@@ -18,11 +18,11 @@ Clear Dream是一款Agent开发toolkit，封装了几个常用的组件，包括
 ## 例子
 
 - `example/` — 基于 Model + ToolRegistry 的交互式 REPL（需要 `OPENAI_*` 环境变量）
-- `example/graph/` — 离线可运行的 DAG 工作流 demo（无需网络）
+- `example/graph/` — LLM Node + ToolNode 的 DAG agent loop（默认离线 mock）
 
 ```bash
 go run ./example        # 交互式 REPL
-go run ./example/graph  # 票据分类 DAG
+go run ./example/graph  # LLM + ToolNode agent loop
 ```
 
 ## 为什么我要做这个开源项目

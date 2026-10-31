@@ -131,7 +131,7 @@ func newTestModel(registry *tools.ToolRegistry, client OpenAiCompatableClient) *
 type toolResultPayload struct {
 	Success bool
 	Error   string
-	Content string
+	Data    string
 }
 
 func decodeToolResult(t *testing.T, message model.Message) toolResultPayload {
@@ -143,6 +143,18 @@ func decodeToolResult(t *testing.T, message model.Message) toolResultPayload {
 	}
 
 	return payload
+}
+
+// decodeToolData decodes the JSON value stored in a tool result's Data field.
+func decodeToolData(t *testing.T, data string) any {
+	t.Helper()
+
+	var value any
+	if err := json.Unmarshal([]byte(data), &value); err != nil {
+		t.Fatalf("decode tool result data %q: %v", data, err)
+	}
+
+	return value
 }
 
 // ==========================================================================
@@ -405,8 +417,8 @@ func TestInvokeRunsToolCallsUntilStop(t *testing.T) {
 	if payload.Error != "" {
 		t.Fatalf("tool result Error = %q, want empty", payload.Error)
 	}
-	if payload.Content != "tool output" {
-		t.Fatalf("tool result Content = %q, want %q", payload.Content, "tool output")
+	if got := decodeToolData(t, payload.Data); got != "tool output" {
+		t.Fatalf("tool result Data = %#v, want %q", got, "tool output")
 	}
 }
 
@@ -458,12 +470,12 @@ func TestInvokeEncodesStructuredToolResults(t *testing.T) {
 		t.Fatalf("tool result Success = false, want true (error: %q)", payload.Error)
 	}
 
-	var echoed map[string]any
-	if err := json.Unmarshal([]byte(payload.Content), &echoed); err != nil {
-		t.Fatalf("tool result Content = %q is not JSON: %v", payload.Content, err)
+	echoed, ok := decodeToolData(t, payload.Data).(map[string]any)
+	if !ok {
+		t.Fatalf("tool result Data = %q, want a JSON object", payload.Data)
 	}
 	if echoed["echoed"] != `{"Text":"hello"}` {
-		t.Fatalf("tool result Content = %q, want the encoded handler result", payload.Content)
+		t.Fatalf("tool result Data = %q, want the encoded handler result", payload.Data)
 	}
 }
 
@@ -497,8 +509,8 @@ func TestInvokeReportsToolErrorAndContinues(t *testing.T) {
 	if !strings.Contains(payload.Error, "tool exploded") {
 		t.Fatalf("tool result Error = %q, want it to contain %q", payload.Error, "tool exploded")
 	}
-	if payload.Content != "" {
-		t.Fatalf("tool result Content = %q, want empty", payload.Content)
+	if payload.Data != "" {
+		t.Fatalf("tool result Data = %q, want empty", payload.Data)
 	}
 }
 
@@ -612,8 +624,11 @@ func TestRunToolCallSuccess(t *testing.T) {
 	}
 
 	payload := decodeToolResult(t, message)
-	if !payload.Success || payload.Error != "" || payload.Content != "result" {
-		t.Fatalf("tool result = %#v, want {Success:true Error:\"\" Content:\"result\"}", payload)
+	if !payload.Success || payload.Error != "" {
+		t.Fatalf("tool result = %#v, want {Success:true Error:\"\"}", payload)
+	}
+	if got := decodeToolData(t, payload.Data); got != "result" {
+		t.Fatalf("tool result Data = %#v, want %q", got, "result")
 	}
 }
 
@@ -631,8 +646,8 @@ func TestRunToolCallNilResult(t *testing.T) {
 	if !payload.Success {
 		t.Fatalf("tool result Success = false, want true (error: %q)", payload.Error)
 	}
-	if payload.Content != "" {
-		t.Fatalf("tool result Content = %q, want empty", payload.Content)
+	if payload.Data != "" {
+		t.Fatalf("tool result Data = %q, want empty", payload.Data)
 	}
 }
 
@@ -676,53 +691,7 @@ func TestRunToolCallResultWithError(t *testing.T) {
 	if !strings.Contains(payload.Error, "partial failure") {
 		t.Fatalf("tool result Error = %q, want it to contain %q", payload.Error, "partial failure")
 	}
-	if payload.Content != "partial output" {
-		t.Fatalf("tool result Content = %q, want %q", payload.Content, "partial output")
-	}
-}
-
-// ==========================================================================
-// encodeToolResult
-// ==========================================================================
-
-func TestEncodeToolResult(t *testing.T) {
-	tests := []struct {
-		name    string
-		result  any
-		want    string
-		wantErr bool
-	}{
-		{name: "string passes through unchanged", result: "already text", want: "already text"},
-		{name: "empty string passes through", result: "", want: ""},
-		{name: "map is json encoded", result: map[string]any{"a": 1}, want: `{"a":1}`},
-		{name: "slice is json encoded", result: []int{1, 2}, want: `[1,2]`},
-		{name: "number is json encoded", result: 42, want: "42"},
-		{name: "nil is json encoded", result: nil, want: "null"},
-		{name: "struct is json encoded", result: struct {
-			Name string `json:"name"`
-		}{Name: "x"}, want: `{"name":"x"}`},
-		{name: "unencodable value returns an error", result: make(chan int), wantErr: true},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := encodeToolResult(tc.result)
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("encodeToolResult() error = nil, want an error")
-				}
-				if !strings.Contains(err.Error(), "failed to encode tool result") {
-					t.Fatalf("encodeToolResult() error = %v, want it to mention %q", err, "failed to encode tool result")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("encodeToolResult() error = %v, want nil", err)
-			}
-			if got != tc.want {
-				t.Fatalf("encodeToolResult() = %q, want %q", got, tc.want)
-			}
-		})
+	if got := decodeToolData(t, payload.Data); got != "partial output" {
+		t.Fatalf("tool result Data = %#v, want %q", got, "partial output")
 	}
 }
